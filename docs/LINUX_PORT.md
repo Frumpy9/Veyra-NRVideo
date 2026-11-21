@@ -57,6 +57,17 @@ Large motion, ambiguous textures, occlusions, HUDs and cuts between similar
 images need broader testing and better flow. Fallback can repeat an endpoint;
 the program does not claim every output is a unique valid generated frame.
 
+Working buffers reside in GPU-local memory. Explicit staging uploads/readback
+exist only at the diagnostic tool boundary; shaders never search across
+host-visible source buffers. The separate diagnostic benchmark runs one warmup
+and reports total processing times, for example:
+
+```sh
+out/linux-player/linux/player/veyra_linux_benchmark 1920 1080 10 8
+```
+
+Arguments: width, height, measured iterations (1..100), motion radius (0..16).
+
 The PPM tool deliberately uploads and reads back pixels and waits for a fence.
 It is an offline diagnostic boundary, not the live playback design. It must not
 be inserted as a CPU round trip into the normal rendering path. Its elapsed
@@ -93,11 +104,26 @@ the current compute tests does not complete that outcome.
 ## Evidence, 2026-11-21
 
 Local build on Mint 22.3, GCC 13.3, Vulkan headers 1.3.275, glslang 14.0.
-Actual execution: Mesa llvmpipe (LLVM 20.1.2), including a run with Khronos
-validation enabled. All 12 translated-image/phase cases had zero mean absolute
-RGB error in the tested interior; static/endpoints/cuts/input bounds/tiny
-extents passed. All 79 existing Remote Play core tests passed on Linux. No
-validation errors were emitted. NVIDIA device access is
-unavailable in the execution environment; no RTX 3070 measurement or PS5 session
-has been performed. Raw logs are outside Git under the workspace's
-`logs/linux-port/`. CI verification is separate and must be checked after push.
+Execution on both Mesa llvmpipe (LLVM 20.1.2) and an actual RTX 3070 8 GiB
+(NVIDIA driver 595.99.02), with Khronos synchronization validation enabled.
+The device is available to host commands although inaccessible to restricted
+commands. All 12 translated-image/phase cases had zero mean absolute RGB error
+in the tested interior; static/endpoints/cuts/input bounds/tiny extents passed.
+All 79 existing Remote Play core tests passed on Linux. No validation errors
+were emitted, including after switching working buffers to GPU-local memory.
+
+RTX 3070 diagnostic 1920x1080, radius 8, 10 samples after one warmup, no validation
+layer: GPU-local median **43.29 ms**, p95 **46.32 ms**, including both CPU uploads,
+GPU search/synthesis, synchronous wait and CPU readback. The first host-visible
+working-buffer prototype measured median 78.35 ms. These are short diagnostic
+runs, not controlled sustained playback benchmarks. **The reference search is
+still too slow for the intended 1080p real-time pipeline**, before adding decode
+and presentation. Flow optimization and removal of diagnostic readback remain
+required; no playable throughput is claimed.
+
+GitHub run [44884187249](https://github.com/Frumpy9/Veyra-NRVideo/actions/runs/44884187249)
+at `574f44d` passed configure/build/core/GPU validation tests. The first run failed
+because its Mesa ICD manifest filename was hardcoded; CI now discovers it.
+Later commits require their own CI verification. Raw local logs are outside Git
+under the workspace's `logs/linux-port/`. No PS5 session, audio/controller,
+physical display cadence or end-to-end latency measurement has been performed.

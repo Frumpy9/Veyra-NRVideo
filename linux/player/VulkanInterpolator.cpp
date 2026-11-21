@@ -48,6 +48,7 @@ struct VulkanInterpolator::Impl {
     VkPipelineLayout pipelineLayout{};
     std::array<VkPipeline, 2> pipelines{};
     std::array<Buffer, 5> buffers{};
+    std::array<Buffer, 3> staging{};
     std::string name;
     Parameters parameters{};
     size_t pixels{};
@@ -62,43 +63,47 @@ struct VulkanInterpolator::Impl {
             if (descriptorLayout) vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (commandPool) vkDestroyCommandPool(device, commandPool, nullptr);
-            for (auto& buffer : buffers) {
+            auto release = [this](Buffer& buffer) {
                 if (buffer.mapped) vkUnmapMemory(device, buffer.memory);
                 if (buffer.buffer) vkDestroyBuffer(device, buffer.buffer, nullptr);
                 if (buffer.memory) vkFreeMemory(device, buffer.memory, nullptr);
-            }
+            };
+            for (auto& buffer : buffers) release(buffer);
+            for (auto& buffer : staging) release(buffer);
             vkDestroyDevice(device, nullptr);
         }
         if (instance) vkDestroyInstance(instance, nullptr);
     }
 
-    void allocate(Buffer& out, VkDeviceSize size) {
+    void allocate(Buffer& out, VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible) {
         out.size = size;
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = size;
-        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        info.usage = usage;
         check(vkCreateBuffer(device, &info, nullptr, &out.buffer), "vkCreateBuffer");
         VkMemoryRequirements requirements;
         vkGetBufferMemoryRequirements(device, out.buffer, &requirements);
         VkPhysicalDeviceMemoryProperties memoryProperties;
         vkGetPhysicalDeviceMemoryProperties(physical, &memoryProperties);
         uint32_t type = std::numeric_limits<uint32_t>::max();
+        const VkMemoryPropertyFlags desired = hostVisible ?
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT :
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
         for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
             const auto flags = memoryProperties.memoryTypes[i].propertyFlags;
             if ((requirements.memoryTypeBits & (1u << i)) &&
-                (flags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                (flags & desired) == desired) {
                 type = i; break;
             }
         }
         if (type == std::numeric_limits<uint32_t>::max())
-            throw std::runtime_error("Diagnostic harness needs host-coherent storage memory");
+            throw std::runtime_error("No memory type for Vulkan storage/staging allocation");
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = type;
         check(vkAllocateMemory(device, &allocation, nullptr, &out.memory), "vkAllocateMemory");
         check(vkBindBufferMemory(device, out.buffer, out.memory, 0), "vkBindBufferMemory");
-        check(vkMapMemory(device, out.memory, 0, size, 0, &out.mapped), "vkMapMemory");
+        if (hostVisible) check(vkMapMemory(device, out.memory, 0, size, 0, &out.mapped), "vkMapMemory");
     }
 
     void initialize(uint32_t width, uint32_t height, const std::filesystem::path& shaders) {
@@ -149,9 +154,15 @@ struct VulkanInterpolator::Impl {
         const std::array<VkDeviceSize, 5> sizes{pixels * 4, pixels * 4, flowBytes, pixels * 4, 8};
         std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
         for (uint32_t i = 0; i < 5; ++i) {
-            allocate(buffers[i], sizes[i]);
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            if (i == 0 || i == 1 || i == 4) usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            if (i == 3) usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            allocate(buffers[i], sizes[i], usage, false);
             bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
         }
+        for (uint32_t i = 0; i < 3; ++i)
+            allocate(staging[i], pixels * 4,
+                     i == 2 ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layoutInfo.bindingCount = 5; layoutInfo.pBindings = bindings.data();
         check(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorLayout), "vkCreateDescriptorSetLayout");
@@ -208,9 +219,8 @@ struct VulkanInterpolator::Impl {
         if (poisoned) throw std::runtime_error("GPU submission failed; recreate the interpolator");
         if (a.size() != pixels || b.size() != pixels || !std::isfinite(phase) || phase < 0 || phase > 1 || radius > 16)
             throw std::invalid_argument("Invalid frame extent, phase (0..1), or search radius (0..16)");
-        std::memcpy(buffers[0].mapped, a.data(), pixels * 4);
-        std::memcpy(buffers[1].mapped, b.data(), pixels * 4);
-        std::memset(buffers[4].mapped, 0, 8);
+        std::memcpy(staging[0].mapped, a.data(), pixels * 4);
+        std::memcpy(staging[1].mapped, b.data(), pixels * 4);
         parameters.phase = phase; parameters.radius = radius;
         check(vkResetCommandBuffer(command, 0), "vkResetCommandBuffer");
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -218,8 +228,16 @@ struct VulkanInterpolator::Impl {
         check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
         VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 1, &barrier, 0, nullptr, 0, nullptr);
+        VkBufferCopy copy{0, 0, pixels * 4};
+        vkCmdCopyBuffer(command, staging[0].buffer, buffers[0].buffer, 1, &copy);
+        vkCmdCopyBuffer(command, staging[1].buffer, buffers[1].buffer, 1, &copy);
+        vkCmdFillBuffer(command, buffers[4].buffer, 0, 8, 0);
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                              0, 1, &barrier, 0, nullptr, 0, nullptr);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptors, 0, nullptr);
         vkCmdPushConstants(command, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
@@ -230,8 +248,12 @@ struct VulkanInterpolator::Impl {
                              0, 1, &barrier, 0, nullptr, 0, nullptr);
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[1]);
         vkCmdDispatch(command, (parameters.width + 15) / 16, (parameters.height + 15) / 16, 1);
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 1, &barrier, 0, nullptr, 0, nullptr);
+        vkCmdCopyBuffer(command, buffers[3].buffer, staging[2].buffer, 1, &copy);
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                              0, 1, &barrier, 0, nullptr, 0, nullptr);
         check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
         check(vkResetFences(device, 1, &fence), "vkResetFences");
@@ -242,7 +264,7 @@ struct VulkanInterpolator::Impl {
         check(vkWaitForFences(device, 1, &fence, VK_TRUE, 30'000'000'000ULL), "vkWaitForFences (30s)");
         poisoned = false;
         std::vector<uint32_t> output(pixels);
-        std::memcpy(output.data(), buffers[3].mapped, pixels * 4);
+        std::memcpy(output.data(), staging[2].mapped, pixels * 4);
         return output;
     }
 };

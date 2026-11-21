@@ -20,9 +20,9 @@ if(NOT VEYRA_DISPLAY_VERSION MATCHES "^${PROJECT_VERSION}")
 endif()
 
 # ---------------------------------------------------------------------------
-# Linux: the OBS filter module only. Every target below is COM / D3D11 / D3D12
-# / Win32 bound, so the portable part of the pipeline lives in linux/ instead
-# of growing ifdefs through 100k lines of Windows code. See docs/OBS_FILTER.md.
+# Linux: the existing OBS filter plus the opt-in native rendering backend.
+# Windows graphics targets below stay isolated from the portable Linux path.
+# See docs/OBS_FILTER.md and docs/LINUX_PORT.md.
 # ---------------------------------------------------------------------------
 if(NOT WIN32)
   option(VEYRA_BUILD_OBS_FILTER "Build the existing Linux OBS filter" ON)

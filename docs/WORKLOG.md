@@ -1702,3 +1702,20 @@ with VK_ERROR_INCOMPATIBLE_DRIVER: CI pinned the older Mesa manifest filename
 lvp_icd.x86_64.json. Changed CI to discover lvp_icd*.json and explicitly verify
 it exists, also enabled synchronization validation. The failed run remains
 recorded as a failure, not a hardware or interpolation regression.
+
+Host-level GPU access subsequently succeeded: actual NVIDIA GeForce RTX 3070,
+8 GiB, driver 595.99.02. Earlier restricted nvidia-smi failure did not establish
+hardware absence. rtx3070-validation-01.log and
+rtx3070-local-memory-validation-02.log each show all synthetic image cases
+passing with Khronos synchronization validation and no errors. Added a bounded
+benchmark executable (one warmup, 1..100 samples). At 1080p/radius8/10 samples:
+initial host-visible working-buffer median 78.3544 ms, p95 82.7324 ms; explicit
+GPU-local working buffers plus boundary staging median 43.2855 ms, p95 46.3195 ms.
+Short diagnostic totals include uploads/fence/readback, exclude decode/display,
+and do not establish sustained performance. The backend remains too slow for
+the desired 1080p real-time outcome. Flow optimization is still required.
+
+GitHub rerun 44884187249 at 574f44d succeeded, including all 79 Remote Play core
+tests and Vulkan synthetic-image/validation cases. Subsequent GPU-local-memory
+change has separate local software and NVIDIA validation evidence; its own CI
+must be checked after push. Latest combined local log: ctest-local-memory-04.log.

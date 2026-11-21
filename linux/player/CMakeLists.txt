@@ -26,6 +26,10 @@ add_executable(veyra_linux_interpolate InterpolateTool.cpp)
 target_link_libraries(veyra_linux_interpolate PRIVATE veyra_linux_gpu)
 target_compile_definitions(veyra_linux_interpolate PRIVATE
   VEYRA_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
+add_executable(veyra_linux_benchmark tests/InterpolationBenchmark.cpp)
+target_link_libraries(veyra_linux_benchmark PRIVATE veyra_linux_gpu)
+target_compile_definitions(veyra_linux_benchmark PRIVATE
+  VEYRA_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
 if(BUILD_TESTING)
   # Exercise the actual upstream queue/timestamp/recovery code on Linux before
   # connecting it to native Chiaki transport. This never contacts a console.
