@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 16, local_size_y = 16) in;
+
+vec4 motionAt(bool second, vec2 q) {
+    ivec2 tile = clamp(ivec2(floor(q / 8)), ivec2(0), ivec2(p.tilesX, p.tilesY) - 1);
+    uint index = uint(tile.y) * p.tilesX + uint(tile.x);
+    if (second) index += p.tilesX * p.tilesY;
+    return flow[index];
+}
+bool inside(vec2 q) {
+    return all(greaterThanEqual(q, vec2(0))) &&
+           all(lessThanEqual(q, vec2(p.width - 1, p.height - 1)));
+}
+vec4 sampleFrame(bool second, vec2 q) {
+    ivec2 base = ivec2(floor(q));
+    vec2 f = fract(q);
+    return mix(mix(pixel(second, base), pixel(second, base + ivec2(1, 0)), f.x),
+               mix(pixel(second, base + ivec2(0, 1)), pixel(second, base + 1), f.x), f.y);
+}
+void main() {
+    uvec2 id = gl_GlobalInvocationID.xy;
+    if (id.x >= p.width || id.y >= p.height) return;
+    uint index = id.y * p.width + id.x;
+    bool second = p.phase >= 0.5;
+    uint held = second ? b[index] : a[index];
+    float sceneError = float(stats.errorSum) / (4095.0 * max(float(stats.tileCount), 1));
+    if (p.phase <= 0) { outputPixels[index] = a[index]; return; }
+    if (p.phase >= 1) { outputPixels[index] = b[index]; return; }
+    // A hard cut must not become a synthetic dissolve.
+    if (sceneError > p.cutThreshold) { outputPixels[index] = held; return; }
+    vec2 q = vec2(id);
+    vec2 qa = q;
+    vec2 qb = q;
+    // Invert the forward mappings at the requested intermediate location.
+    for (int i = 0; i < 3; ++i) {
+        qa = q - p.phase * motionAt(false, qa).xy;
+        qb = q - (1 - p.phase) * motionAt(true, qb).xy;
+    }
+    vec4 ma = motionAt(false, qa);
+    vec4 mb = motionAt(true, qb);
+    bool validA = inside(qa) && ma.z < 0.08 &&
+        length(ma.xy + motionAt(true, qa + ma.xy).xy) <= 1.5;
+    bool validB = inside(qb) && mb.z < 0.08 &&
+        length(mb.xy + motionAt(false, qb + mb.xy).xy) <= 1.5;
+    vec4 result;
+    if (validA && validB) result = mix(sampleFrame(false, qa), sampleFrame(true, qb), p.phase);
+    else if (validA) result = sampleFrame(false, qa);
+    else if (validB) result = sampleFrame(true, qb);
+    else { outputPixels[index] = held; return; }
+    outputPixels[index] = packUnorm4x8(result);
+}

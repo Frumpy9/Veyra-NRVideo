@@ -1658,3 +1658,34 @@ Windows 用 `scripts/acceptance/build-recording-handoff.py --task codex-communit
 在 E:/项目/Veyra/worktrees/magewell-low-latency-20261119 从综合测试版 2be802ee 隔离修复，产品提交 4e29ff4a。build-recording-handoff.py --task codex-magewell-low-latency-20261119 --jobs 2 启用原版 Magewell SDK 和既有 libdovi、Chiaki 固定输入，首次完整构建 336.7s，提交后增量构建 8.4s，最终回执 build-20261119-082706/receipt.json。部署脚本独立复制既有 QA stage，91 个着色器逐哈希核对。8 个预期结果均通过，包括无卡探针按预期返回 1，DLSS/VFG 四组 P010 回归 debugErrors=0，以及产品采集对话框启动。extract.py --check 缺失和占位符问题均为 0。
 
 初次启动自动生成的约 2.7 MB Qt 缓存已从 C 盘对应本次唯一摘要路径移至 E 盘任务 tmp。显式重定向后复测通过，手测入口默认采用同一隔离策略。实卡端到端帧率和延迟需现场验证，未改运行库、用户配置、驱动或发行包。可运行入口在 tests/codex-magewell-low-latency-20261119/启动美乐威低延迟测试版.cmd。
+
+### 2026-11-21 Native Linux fork: first compute milestone
+
+Current user authorized a Linux fork for Mint/RTX 3070 Remote Play. Upstream
+baseline fe8df5328a62849eb2d79053564b9574ab68aecd; fork Frumpy9/Veyra-NRVideo,
+branch linux/remote-play. Separate opt-in Vulkan backend and PPM correctness
+harness added, retaining default OBS and Windows paths. Design, remaining
+acceptance conditions and exact limitations: [Linux port](LINUX_PORT.md).
+
+This environment is Mint 22.3, GCC 13.3. Build tools/headers were downloaded as
+Ubuntu packages and extracted under /home/chris/Documents/veyra/deps/linux-port;
+no system package, GPU driver, credential or real user configuration was changed.
+Actual source: /home/chris/Documents/veyra/Veyra-NRVideo. Build outputs, raw logs,
+and generated images respectively under sibling build/linux-port,
+logs/linux-port and reports/linux-port. Build concurrency 2.
+
+Configured with cmake -S Veyra-NRVideo -B build/linux-port -G Ninja,
+VEYRA_BUILD_OBS_FILTER=OFF, VEYRA_BUILD_LINUX_PLAYER=ON, explicit local Vulkan
+include/library/compiler paths. cmake --build build/linux-port -j2 succeeded.
+ctest --test-dir build/linux-port -V --timeout 120 with Mesa llvmpipe and Khronos
+validation enabled passed. 12 translated-frame/phase interior ground truths:
+RGB MAE 0; static/endpoints/cuts/input bounds/partial and tiny workgroups passed.
+Validation/synchronization-validation run emitted no errors. PPM CLI generated
+the expected midpoint and refused to overwrite an existing output. Logs:
+build-01.log, build-02.log, gpu-01.log, validation-01.log,
+ctest-validation-02.log; PPM proof under reports/linux-port/ppm-proof/result.txt.
+
+No NVIDIA hardware, actual display, PS5, controller, audio, sustained throughput
+or optical latency validation was possible. No live Linux player yet. Diagnostic
+host upload/readback must not enter the live pipeline. GitHub CI result remains
+separate from these local results and will be verified after pushing the branch.

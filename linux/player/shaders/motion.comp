@@ -1,0 +1,49 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// One bounded search per 8x8 tile in both directions. Reference backend:
+// exhaustive search is deliberately simple; hierarchical flow comes later.
+layout(local_size_x = 8, local_size_y = 8) in;
+void main() {
+    uvec2 tile = gl_GlobalInvocationID.xy;
+    if (tile.x >= p.tilesX || tile.y >= p.tilesY) return;
+    bool second = gl_GlobalInvocationID.z != 0;
+    ivec2 origin = ivec2(tile * 8);
+    float best = 1e20;
+    ivec2 vector = ivec2(0);
+    int radius = int(p.radius);
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            float error = 0;
+            float samples = 0;
+            for (int y = 0; y < 8; y += 2) {
+                for (int x = 0; x < 8; x += 2) {
+                    ivec2 q = origin + ivec2(x, y);
+                    ivec2 r = q + ivec2(dx, dy);
+                    if (q.x >= int(p.width) || q.y >= int(p.height)) continue;
+                    // Penalize, rather than clamp, candidates leaving the image.
+                    if (any(lessThan(r, ivec2(0))) ||
+                        any(greaterThanEqual(r, ivec2(p.width, p.height)))) {
+                        error += 1; samples += 1; continue;
+                    }
+                    vec3 delta = pixel(second, q).rgb - pixel(!second, r).rgb;
+                    error += dot(abs(delta), vec3(1.0 / 3.0));
+                    samples += 1;
+                }
+            }
+            error /= max(samples, 1);
+            // Prefer the smallest motion in flat/ambiguous patches.
+            float cost = error + 0.00001 * float(dx * dx + dy * dy);
+            if (cost < best) { best = cost; vector = ivec2(dx, dy); }
+        }
+    }
+    uint index = tile.y * p.tilesX + tile.x;
+    if (second) index += p.tilesX * p.tilesY;
+    flow[index] = vec4(vector, best, 0);
+    if (!second) {
+        // 4096^2 pixels / 8^2 tiles * 4095 fits uint32, including a full cut.
+        atomicAdd(stats.errorSum, uint(clamp(best, 0, 1) * 4095));
+        atomicAdd(stats.tileCount, 1);
+    }
+}
