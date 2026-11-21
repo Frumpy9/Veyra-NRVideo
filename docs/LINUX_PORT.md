@@ -48,6 +48,9 @@ RGB, dimensions 1..4096. HDR and YUV conversion are not implemented here.
   input validation and RAII cleanup including partial initialization failures.
 - GPU tests against known translated-image ground truth, static/endpoint
   preservation, scene cuts, invalid inputs and partial/tiny workgroups.
+- Actual Veyra Remote Play core (queues, timestamps, input gating, decoder pump,
+  recovery) compiled on Linux; its existing 79 tests pass without a console.
+  Shared CMake declarations are extracted unchanged from the Windows target.
 
 The search is a **reference implementation**, not production optical flow.
 Large motion, ambiguous textures, occlusions, HUDs and cuts between similar
@@ -93,7 +96,8 @@ Local build on Mint 22.3, GCC 13.3, Vulkan headers 1.3.275, glslang 14.0.
 Actual execution: Mesa llvmpipe (LLVM 20.1.2), including a run with Khronos
 validation enabled. All 12 translated-image/phase cases had zero mean absolute
 RGB error in the tested interior; static/endpoints/cuts/input bounds/tiny
-extents passed. No validation errors were emitted. NVIDIA device access is
+extents passed. All 79 existing Remote Play core tests passed on Linux. No
+validation errors were emitted. NVIDIA device access is
 unavailable in the execution environment; no RTX 3070 measurement or PS5 session
 has been performed. Raw logs are outside Git under the workspace's
 `logs/linux-port/`. CI verification is separate and must be checked after push.

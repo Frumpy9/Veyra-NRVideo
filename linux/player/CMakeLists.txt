@@ -1,5 +1,7 @@
 find_package(Vulkan 1.1 REQUIRED COMPONENTS glslangValidator)
 include(CTest)
+set(VEYRA_ROOT "${PROJECT_SOURCE_DIR}")
+include("${PROJECT_SOURCE_DIR}/cmake/VeyraRemotePlayCore.cmake")
 
 set(veyra_linux_shaders)
 foreach(stage motion interpolate)
@@ -25,6 +27,12 @@ target_link_libraries(veyra_linux_interpolate PRIVATE veyra_linux_gpu)
 target_compile_definitions(veyra_linux_interpolate PRIVATE
   VEYRA_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
 if(BUILD_TESTING)
+  # Exercise the actual upstream queue/timestamp/recovery code on Linux before
+  # connecting it to native Chiaki transport. This never contacts a console.
+  add_executable(veyra_linux_remoteplay_core_tests ../../tests/remoteplay/CoreTests.cpp)
+  target_link_libraries(veyra_linux_remoteplay_core_tests PRIVATE veyra_remoteplay_core)
+  add_test(NAME linux_remoteplay_core COMMAND veyra_linux_remoteplay_core_tests)
+  set_tests_properties(linux_remoteplay_core PROPERTIES TIMEOUT 120)
   add_executable(veyra_linux_gpu_tests tests/InterpolationTests.cpp)
   target_link_libraries(veyra_linux_gpu_tests PRIVATE veyra_linux_gpu)
   target_compile_definitions(veyra_linux_gpu_tests PRIVATE

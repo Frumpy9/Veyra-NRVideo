@@ -2,9 +2,9 @@ name: Linux player Vulkan checks
 on:
   push:
     branches: ['linux/**']
-    paths: ['linux/player/**', 'CMakeLists.txt', '.github/workflows/linux-player-checks.yml']
+    paths: ['linux/player/**', 'cmake/VeyraRemotePlay*.cmake', 'include/veyra/remoteplay/**', 'src/remoteplay/**', 'tests/remoteplay/**', 'CMakeLists.txt', '.github/workflows/linux-player-checks.yml']
   pull_request:
-    paths: ['linux/player/**', 'CMakeLists.txt', '.github/workflows/linux-player-checks.yml']
+    paths: ['linux/player/**', 'cmake/VeyraRemotePlay*.cmake', 'include/veyra/remoteplay/**', 'src/remoteplay/**', 'tests/remoteplay/**', 'CMakeLists.txt', '.github/workflows/linux-player-checks.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,9 +26,13 @@ jobs:
         run: cmake --build out/linux-player --parallel 2
       - name: Verify intermediate frames with software Vulkan and validation
         env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          VK_LAYER_ENABLES: VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
         run: |
           set -o pipefail
+          # Mesa packages use either lvp_icd.json or lvp_icd.x86_64.json.
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -f "${icds[0]}"
+          export VK_ICD_FILENAMES="${icds[0]}"
           ctest --test-dir out/linux-player -V --timeout 120 2>&1 | tee out/linux-player/validation.log
           if grep -E 'Validation Error|VUID-' out/linux-player/validation.log; then exit 1; fi

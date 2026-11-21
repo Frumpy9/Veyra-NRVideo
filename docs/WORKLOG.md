@@ -1689,3 +1689,16 @@ No NVIDIA hardware, actual display, PS5, controller, audio, sustained throughput
 or optical latency validation was possible. No live Linux player yet. Diagnostic
 host upload/readback must not enter the live pipeline. GitHub CI result remains
 separate from these local results and will be verified after pushing the branch.
+
+Follow-up: extracted the existing veyra_remoteplay_core CMake declarations into
+cmake/VeyraRemotePlayCore.cmake for shared Windows/Linux use; byte-for-byte
+comparison against the prior block passed. No protocol or source implementation
+changed. The existing tests/remoteplay/CoreTests.cpp compiled on Linux and ran
+79/79 passing (remoteplay-core-01.log). Combined Vulkan/core CTest rerun is logged
+in ctest-core-validation-03.log.
+
+First GitHub run 44884006391 built successfully but failed at vkCreateInstance
+with VK_ERROR_INCOMPATIBLE_DRIVER: CI pinned the older Mesa manifest filename
+lvp_icd.x86_64.json. Changed CI to discover lvp_icd*.json and explicitly verify
+it exists, also enabled synchronization validation. The failed run remains
+recorded as a failure, not a hardware or interpolation regression.
